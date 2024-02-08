@@ -1,0 +1,154 @@
+#!/bin/bash
+
+# 获取主网卡名称
+NIC=$(ip route show | awk '/default/ {print $5}')
+
+# 输入端口函数
+function input() {
+    protocol="$1"
+    port="$2"
+    iptables -A INPUT -i $NIC -p $protocol --dport $port -j ACCEPT
+    iptables -A OUTPUT -o $NIC -p $protocol --sport $port -m state --state ESTABLISHED -j ACCEPT
+}
+
+# 输入IP地址或域名函数
+function inputhost() {
+    protocol="$1"
+    host="$2"
+    port="$3"
+    host_ip=$(dig +short $host)
+    iptables -A INPUT -i $NIC -p $protocol -s $host_ip --dport $port -j ACCEPT
+    iptables -A OUTPUT -o $NIC -p $protocol -d $host_ip --sport $port -m state --state ESTABLISHED -j ACCEPT
+}
+
+# 输出端口函数
+function output() {
+    protocol="$1"
+    port="$2"
+    iptables -A OUTPUT -o $NIC -p $protocol --dport $port -j ACCEPT
+    iptables -A INPUT -i $NIC -p $protocol --sport $port -m state --state ESTABLISHED -j ACCEPT
+}
+
+# 输出IP地址函数
+function outputhost() {
+    protocol="$1"
+    host="$2"
+    port="$3"
+    host_ip=$(dig +short $host)
+    iptables -A OUTPUT -o $NIC -p $protocol -d $host_ip --dport $port -j ACCEPT
+    iptables -A INPUT -i $NIC -p $protocol -s $host_ip --sport $port -m state --state ESTABLISHED -j ACCEPT
+}
+
+# 流量转发函数
+function vpn() {
+    sysctl -w net.ipv4.ip_forward=1
+    iptables -A FORWARD -i $NIC -o tun0 -j ACCEPT
+    iptables -A FORWARD -i eth0 -o $NIC -j ACCEPT
+    iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o $NIC -j MASQUERADE
+}
+
+# 初始化
+function init() {
+	iptables -A INPUT -i $NIC  -m state --state RELATED,ESTABLISHED -j ACCEPT
+	iptables -A INPUT -i lo -j ACCEPT
+
+	iptables -A OUTPUT -o $NIC -m state --state RELATED,ESTABLISHED -j ACCEPT
+	iptables -A OUTPUT -o lo -j ACCEPT
+
+	iptables -A OUTPUT -o $NIC -p udp -m udp --dport 53 -m state --state NEW,ESTABLISHED -j ACCEPT
+	iptables -A INPUT -i $NIC -p udp -m udp --sport 53  -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+
+	#iptables -A OUTPUT -o $NIC -p icmp --icmp-type echo-request -j ACCEPT
+	#iptables -A INPUT -p icmp --icmp-type echo-reply -j ACCEPT
+}
+
+
+# 默认拒绝
+function drop() {
+	iptables -P INPUT DROP
+	iptables -P OUTPUT DROP
+}
+
+# 默认通行
+function accept(){
+    iptables -P INPUT ACCEPT
+	iptables -P OUTPUT ACCEPT
+}
+
+# 清除规则
+function clean(){
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -X
+    iptables -P INPUT ACCEPT
+    iptables -P OUTPUT ACCEPT
+}
+
+# icmp放行
+function accepticmp(){
+    index="$1"
+    iptables -I INPUT 3 -p icmp --icmp-type echo-request -s $index -j ACCEPT
+    iptables -I OUTPUT 3 -p icmp --icmp-type echo-request -d $index -j ACCEPT
+}
+
+function icmpinit(){
+    #iptables -A INPUT -p icmp -j DROP
+    #iptables -A OUTPUT -p icmp -j DROP
+    iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
+    iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP
+
+}
+
+function l(){
+    iptables -L
+}
+
+
+# 根据传入的参数执行相应的函数
+if [ "$1" = "input" ]; then
+    input "$2" "$3"
+elif [ "$1" = "inputhost" ]; then
+    inputhost "$2" "$3" "$4"
+elif [ "$1" = "output" ]; then
+    output "$2" "$3"
+elif [ "$1" = "outputhost" ]; then
+    outputhost "$2" "$3" "$4"
+elif [ "$1" = "vpn" ]; then
+    vpn
+elif [ "$1" = "init" ]; then
+    init
+elif [ "$1" = "accept" ]; then
+    accept
+elif [ "$1" = "drop" ]; then
+    drop
+# 清除iptables 规则
+elif [ "$1" = "clean" ]; then
+    clean
+# 查看iptables
+elif [ "$1" = "l" ]; then
+    l
+# 允许icmp
+elif [ "$1" = "accepticmp" ]; then
+    accepticmp "$2"
+# 拒绝icmp default
+elif [ "$1" = "icmpinit" ]; then
+    icmpinit
+else
+    echo "Invalid input"
+    echo "Usage: ops input protocol port"
+    echo "       ops inputhost protocol host port"
+    echo "       ops output protocol port"
+    echo "       ops outputhost protocol host port"
+    echo "       ops vpn        openvpn规则"
+    echo "       ops init       初始化"
+    echo "       ops accept     默认通行"
+    echo "       ops drop       默认拒绝"
+    echo "       ops clean      清除所有"
+    echo "       ops accepticmp host    放行icmp"
+    echo "       ops icmpinit   拒绝icmp"
+    echo "       ops l          show iptables"
+fi
+   
+

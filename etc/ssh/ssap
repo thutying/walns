@@ -1,0 +1,2 @@
+#! /bin/bash
+ssh -i walns.key walns@los.walns.org -p 22222
